@@ -26,4 +26,21 @@ export const config = {
     },
     callbackUrl: process.env.GITHUB_CALLBACK_URL || 'http://localhost:3000/api/v1/auth/github/callback',
   },
+  stripe: {
+    get secretKey() {
+      return required('STRIPE_SECRET_KEY');
+    },
+    get webhookSecret() {
+      return required('STRIPE_WEBHOOK_SECRET');
+    },
+    get priceId() {
+      return required('STRIPE_PRICE_ID');
+    },
+    get checkoutSuccessUrl() {
+      return process.env.STRIPE_CHECKOUT_SUCCESS_URL || `${config.frontendUrl}/profile?checkout=success`;
+    },
+    get checkoutCancelUrl() {
+      return process.env.STRIPE_CHECKOUT_CANCEL_URL || `${config.frontendUrl}/profile?checkout=cancel`;
+    },
+  },
 };

@@ -21,8 +21,8 @@ authRouter.get('/auth/me', (req: Request, res: Response) => {
     res.status(401).json({ error: 'not authenticated' });
     return;
   }
-  const { username, displayName, avatarUrl, memberSince } = req.user;
-  res.json({ username, displayName, avatarUrl, memberSince });
+  const { username, displayName, avatarUrl, plan, memberSince } = req.user;
+  res.json({ username, displayName, avatarUrl, plan, memberSince });
 });
 
 authRouter.post('/auth/logout', (req: Request, res: Response, next) => {

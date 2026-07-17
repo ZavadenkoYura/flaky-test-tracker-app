@@ -10,6 +10,7 @@ function toExpressUser(user: User): Express.User {
     displayName: user.display_name,
     avatarUrl: user.avatar_url,
     accessToken: user.access_token,
+    plan: user.plan,
     memberSince: user.createdAt,
   };
 }
