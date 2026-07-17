@@ -9,11 +9,17 @@ function required(name: string): string {
 export const config = {
   port: process.env.PORT || 3000,
   db: {
+    // Neon (and most managed Postgres) hand you a single connection string —
+    // set DATABASE_URL to use it directly instead of the individual fields
+    // below (which remain the default for local dev).
+    url: process.env.DATABASE_URL || null,
     host: process.env.DB_HOST || 'localhost',
     port: Number(process.env.DB_PORT) || 5432,
     database: process.env.DB_NAME || 'flaky_test_tracker',
     username: process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD || '',
+    // Neon requires SSL; local Postgres typically doesn't support it.
+    ssl: process.env.DB_SSL === 'true',
   },
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:8000',
   sessionSecret: process.env.SESSION_SECRET || 'dev-only-insecure-secret-change-me',
