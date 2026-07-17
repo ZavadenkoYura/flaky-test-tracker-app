@@ -5,6 +5,7 @@ import session from 'express-session';
 import { config } from './config';
 import { passport } from './auth/passport';
 import { sessionStore } from './auth/session-store';
+import { ciRunsRouter } from './routes/ci-runs';
 import { authRouter } from './routes/auth';
 import { tokensRouter } from './routes/tokens';
 
@@ -25,6 +26,7 @@ app.use(
 );
 app.use(passport.initialize());
 app.use(passport.session());
+app.use(PREFIX, ciRunsRouter);
 app.use(PREFIX, authRouter);
 app.use(PREFIX, tokensRouter);
 
