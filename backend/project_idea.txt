@@ -1,0 +1,238 @@
+FLAKY TEST TRACKER — PROJECT NOTES
+===================================
+Captured from a planning conversation with Claude, 2026-07-04.
+
+
+THE ORIGINAL GOAL
+------------------
+User (a software engineer) asked for passive-income app ideas. Landed on:
+"Niche SaaS tool — pick a narrow, painful workflow problem and charge $5-20/mo."
+Scoped to: own work pain, weekend/two build budget, brainstorm-then-pick.
+
+
+THE IDEA: FLAKY TEST TRACKER
+------------------------------
+Problem: teams with real test suites eventually get flaky tests (fail
+intermittently, not because the code is broken — timing, shared state,
+network flakiness, etc). Engineers lose trust in CI, waste time re-running
+builds, and nobody has clean data on which tests are actual repeat
+offenders. Existing solutions (Datadog CI Visibility, BuildPulse, Trunk)
+are expensive/overkill for a small team.
+
+Core mechanic:
+1. Team adds a CI step that posts test results (JUnit XML) after each run.
+2. Service stores per-test history and computes a flakiness score.
+3. Dashboard/API shows top flaky tests ranked by score, trend over time.
+4. (Future) PR comment bot: "this test failed but has a 40% historical
+   flake rate, likely not your fault."
+
+Monetization: GitHub Marketplace listing as a GitHub App. Free tier
+(1 repo, 30-day history), paid tier ~$15-20/mo per repo/org for more
+history and repos. Distribution angle: blog posts like "we tracked
+flakiness across N public repos" get organic shares among engineers.
+
+Honest risks flagged during planning:
+- JUnit XML isn't perfectly standardized across test runners; needs
+  normalization on ingestion.
+- The "flaky vs. real regression" heuristic is fuzzy — being too
+  aggressive erodes user trust. Chose to be conservative (only flag
+  clear alternating pass/fail patterns).
+- A GitHub App has real setup/review overhead beyond a plain SaaS —
+  decided to defer this until demand is validated (see ROADMAP).
+
+
+HOW JUNIT XML WORKS (why it's the right ingestion format)
+------------------------------------------------------------
+JUnit XML is a de facto standard test-result format emitted by nearly
+every test runner (originally from Java's JUnit, adopted broadly).
+
+Example:
+  <testsuites>
+    <testsuite name="auth.test.js" tests="3" failures="1">
+      <testcase classname="AuthTests" name="logs in with valid creds"/>
+      <testcase classname="AuthTests" name="rejects bad password">
+        <failure message="expected 401 got 500">...</failure>
+      </testcase>
+    </testsuite>
+  </testsuites>
+
+Each <testcase> = one test: pass (no child), <failure> (assertion),
+<error> (exception), or <skipped>. That's exactly the granularity needed.
+
+Enabling it per runner:
+  - pytest: `pytest --junitxml=results.xml` (built in)
+  - Jest:   `jest --reporters=jest-junit` (needs jest-junit package)
+  - Mocha:  `mocha --reporter mocha-junit-reporter`
+  - Go:     `gotestsum` (go test doesn't natively emit it)
+
+Gotcha: schema isn't perfectly consistent across runners (nesting,
+where failure messages live, presence of classname). Normalize on
+ingestion using `classname::name` as a stable per-test identity key.
+
+
+ARCHITECTURE BUILT SO FAR
+----------------------------
+Location: ~/flaky-test-tracker
+Stack: Node.js + Express, SQLite (better-sqlite3) for zero-setup local
+dev, fast-xml-parser for XML, multer for file upload. Chosen for weekend-
+build speed, not final production stack.
+
+Files:
+  package.json          — deps: express, better-sqlite3, fast-xml-parser
+                           (v5.x, not v4 — v4 had a moderate CVE in
+                           XMLBuilder; we only use XMLParser but bumped
+                           anyway), multer v2.x (v1.x had known CVEs).
+  src/parser.js          — parseJUnitXml(xmlString): handles both
+                           <testsuites> and bare <testsuite> roots,
+                           normalizes jest-junit and pytest output into
+                           { suite, classname, name, test_key, status,
+                           duration, message }. Verified against real
+                           sample XML for both formats.
+  src/db.js              — SQLite schema (`runs` table: repo, commit_sha,
+                           branch, ci_run_id, test_key, suite, name,
+                           status, duration, message, created_at).
+                           insertResults() batches inserts in a
+                           transaction. getFlakyTests(repo, windowSize=50)
+                           implements the flakiness heuristic (see below).
+  src/server.js          — POST /api/results (multipart: repo,
+                           commit_sha, branch, ci_run_id, results=<xml
+                           file>) ingests a CI run. GET /api/flaky/:repo
+                           returns ranked flaky tests.
+  test-fixtures/         — sample pytest.xml and jest.xml used to verify
+                           the parser end-to-end.
+
+Verified live: started the server, POSTed 6 simulated CI runs where one
+test alternated pass/fail every run and another always passed. Queried
+/api/flaky/acme%2Fwebapp and confirmed:
+  - the alternating test was correctly flagged, flakiness_score = 0.5
+  - the always-passing test was correctly excluded (zero failures = no
+    signal, not flaky)
+
+
+THE FLAKINESS HEURISTIC, EXPLAINED
+--------------------------------------
+No ML — deliberately simple and explainable to a user.
+
+For each test, per repo:
+  1. Pull the most recent `windowSize` runs (default 50), newest first.
+     WHY A WINDOW: relevance decays (a test that flaked 6 months ago but
+     has been solid for 200 runs since shouldn't stay flagged), and it
+     keeps scoring fair across tests with wildly different total run
+     counts. Overridable per-request via ?window=N.
+  2. Skip tests with <3 total runs or zero failures — no signal yet, or
+     it's just consistently healthy.
+  3. score = min(passed, failed) / total
+       - all-pass or all-fail -> 0 (healthy, or a real regression, not
+         flaky)
+       - alternates ~50/50 -> approaches 0.5 (maximally flaky)
+  4. Return tests sorted by score, worst first.
+
+Known gap (flagged, not yet fixed): the heuristic doesn't check whether
+the code under test actually changed between a pass and a fail. A test
+that genuinely broke, then got fixed, currently scores as "flaky" too.
+A v2 improvement would correlate failures against diffs touching the
+test's covered files/lines before counting them as evidence of flakiness
+rather than a real regression.
+
+
+CI INTEGRATION (in progress)
+--------------------------------
+Plan: a GitHub Actions step that runs tests with JUnit XML enabled, then
+curl-uploads the XML to the service's /api/results endpoint. Drafted
+(not yet finalized/saved) for pytest:
+
+  - run: pytest --junitxml=results.xml
+    continue-on-error: true   # so a failing test still gets reported
+  - name: Report results to flaky-test-tracker
+    if: always()
+    run: |
+      curl -sf -X POST "$TRACKER_URL/api/results" \
+        -F "repo=${{ github.repository }}" \
+        -F "commit_sha=${{ github.sha }}" \
+        -F "branch=${{ github.ref_name }}" \
+        -F "ci_run_id=${{ github.run_id }}" \
+        -F "results=@results.xml;type=text/xml"
+    env:
+      TRACKER_URL: ${{ secrets.FLAKY_TRACKER_URL }}
+  - name: Fail job if tests failed
+    if: failure()
+    run: exit 1
+
+A Jest equivalent (swap the test step for `jest --reporters=jest-junit`)
+was planned but not yet written to disk.
+
+
+AUTHENTICATION & INTEGRITY (decided, not yet implemented)
+---------------------------------------------------------------
+Problem: /api/results is currently open — anyone who knows the URL could
+post fake results tagged with any repo name.
+
+Decided approach:
+  1. AUTHENTICATION — per-repo API token.
+     - Generate a random token at "install" time (e.g.
+       crypto.randomBytes(32).toString('hex')), show it once to the user.
+     - Store only its HASH (SHA-256) server-side, never the raw token —
+       same principle as password storage.
+     - CI sends it as `Authorization: Bearer <token>` (stored as a GitHub
+       Actions secret, e.g. FLAKY_TRACKER_TOKEN).
+     - Server hashes the incoming token, looks it up, confirms it matches
+       the claimed `repo` field in the request; 401 if not. Limits blast
+       radius of a leaked token to one repo.
+  2. INTEGRITY — chose the lightweight option for v1.
+     - Baseline (sufficient for now): HTTPS/TLS between CI and the
+       service, combined with the per-repo token above. Good enough
+       against "randoms poisoning flaky-test data," not designed to
+       resist a nation-state.
+     - Stronger option (deferred): HMAC-SHA256 request signing with a
+       per-repo secret (same pattern as GitHub webhook signatures) plus
+       a timestamp window to prevent replay. Only worth adding if a
+       compromised/malicious CI job forging results becomes a real
+       concern — decided not to build this for v1, plain bearer-token +
+       TLS is the call.
+  Not yet implemented in code — next step is a `tokens` table + auth
+  middleware in server.js.
+
+
+USER ONBOARDING / ACCESS (decided direction, not yet built)
+-----------------------------------------------------------------
+Two options discussed:
+
+  OPTION A — GitHub App (long-term target)
+    Install via GitHub's App flow -> service gets an installation ID,
+    generates the per-repo token automatically -> one-time setup page
+    shows the token + YAML snippet to paste -> billing via GitHub
+    Marketplace's built-in billing (avoids building custom Stripe
+    integration; GitHub handles card + subscription state, sends
+    webhooks on plan changes). Also solves distribution: Marketplace
+    listings get organic discovery from the exact target audience.
+    Downside: GitHub App review/approval adds real setup time before
+    launch.
+
+  OPTION B — plain signup + manual token (chosen for v1)
+    Simple "sign in with GitHub" (lightweight OAuth, not a full GitHub
+    App) or email/password -> dashboard "generate token" button -> user
+    manually pastes token into their repo's CI secrets and copies the
+    YAML themselves -> billing via Stripe Checkout.
+    Faster to build, clunkier install UX, no Marketplace discovery.
+
+DECISION: build Option B first to validate demand with a handful of real
+users (own team, friends' teams) before paying the GitHub App review/
+Marketplace integration cost. Migrate to Option A once demand is
+confirmed and distribution actually matters.
+
+
+OPEN NEXT STEPS (not yet done)
+-----------------------------------
+1. Implement bearer-token auth in server.js (tokens table, token
+   generation, auth middleware).
+2. Build the Option B signup flow (users/tokens tables, signup + token
+   endpoints) — the current concrete "what to build next" item.
+3. Finalize and save the GitHub Actions YAML (pytest done in draft,
+   Jest variant not yet written) as examples/ files.
+4. Minimal dashboard page — currently API-only (GET /api/flaky/:repo
+   returns JSON, nothing renders it visually).
+5. Stripe Checkout integration for billing.
+6. Longer-term: GitHub App + Marketplace listing once demand validated.
+7. Heuristic v2: correlate failures with code diffs touching the test's
+   covered files, to stop conflating "real regression, since fixed"
+   with genuine flakiness.
