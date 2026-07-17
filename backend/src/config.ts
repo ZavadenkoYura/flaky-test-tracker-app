@@ -43,4 +43,10 @@ export const config = {
       return process.env.STRIPE_CHECKOUT_CANCEL_URL || `${config.frontendUrl}/profile?checkout=cancel`;
     },
   },
+  aiClassifier: {
+    // The ai-classifier microservice (see ../ai-classifier) —
+    // a separate process, run and deployed independently of this backend.
+    url: process.env.AI_CLASSIFIER_URL || 'http://localhost:4100',
+    timeoutMs: Number(process.env.AI_CLASSIFIER_TIMEOUT_MS) || 5000,
+  },
 };

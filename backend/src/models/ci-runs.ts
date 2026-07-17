@@ -14,6 +14,9 @@ export class CiRun extends Model<InferAttributes<CiRun>, InferCreationAttributes
   declare status: TestStatus;
   declare duration: number | null;
   declare message: string | null;
+  declare ai_category: string | null;
+  declare ai_summary: string | null;
+  declare ai_suggestion: string | null;
   declare createdAt: CreationOptional<Date>;
 }
 
@@ -35,6 +38,12 @@ CiRun.init(
     status: { type: DataTypes.ENUM('passed', 'failed', 'skipped'), allowNull: false },
     duration: { type: DataTypes.REAL, allowNull: true },
     message: { type: DataTypes.TEXT, allowNull: true },
+    // Populated asynchronously after ingestion, Pro-plan repos only — see
+    // services/ai-classifier.ts. Null until classification completes (or if
+    // the repo's plan doesn't have AI classification enabled).
+    ai_category: { type: DataTypes.TEXT, allowNull: true },
+    ai_summary: { type: DataTypes.TEXT, allowNull: true },
+    ai_suggestion: { type: DataTypes.TEXT, allowNull: true },
     createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW, field: 'created_at' },
   },
   {

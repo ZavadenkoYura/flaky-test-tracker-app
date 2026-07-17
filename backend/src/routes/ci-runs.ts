@@ -22,7 +22,7 @@ ciRunsRouter.post(
 
     let ingested: number;
     try {
-      ingested = await ingestResults(repo, { commit_sha, branch, ci_run_id }, file.buffer.toString('utf-8'));
+      ingested = await ingestResults(repo, { commit_sha, branch, ci_run_id }, file.buffer.toString('utf-8'), req.ciUserId!);
     } catch (err) {
       res.status(400).json({ error: `failed to ingest JUnit XML: ${(err as Error).message}` });
       return;

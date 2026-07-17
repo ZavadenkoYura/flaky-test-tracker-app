@@ -1,5 +1,13 @@
 export type TestStatus = 'passed' | 'failed' | 'skipped';
 
+export type AiCategory = 'timing' | 'network' | 'assertion' | 'environment' | 'unknown';
+
+export interface AiClassification {
+  category: AiCategory;
+  summary: string;
+  suggestion: string;
+}
+
 export interface ParsedTestCase {
   suite: string;
   classname: string;
@@ -18,6 +26,12 @@ export interface RunRow {
   created_at: string;
 }
 
+export interface LatestFailure {
+  ai_category: AiCategory | null;
+  ai_summary: string | null;
+  ai_suggestion: string | null;
+}
+
 export interface IngestResultsInput {
   commit_sha: string;
   branch?: string | null;
@@ -32,4 +46,7 @@ export interface FlakyTestResult {
   passed: number;
   failed: number;
   flakiness_score: number;
+  ai_category: AiCategory | null;
+  ai_summary: string | null;
+  ai_suggestion: string | null;
 }

@@ -12,7 +12,7 @@ import { billingRouter, billingWebhookRouter } from './routes/billing';
 
 export const app = express();
 const PORT = config.port;
-const PREFIX = '/api/v1';
+const PREFIX = "/api/v1"
 
 app.use(cors({ origin: config.frontendUrl, credentials: true }));
 
@@ -34,9 +34,9 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 app.use(PREFIX, ciRunsRouter);
-app.use(PREFIX, authRouter);
-app.use(PREFIX, tokensRouter);
-app.use(PREFIX, billingRouter);
+app.use(PREFIX, authRouter)
+app.use(PREFIX, tokensRouter)
+app.use(PREFIX, billingRouter)
 
 sessionStore.sync().then(() => {
   app.listen(PORT, () => {
