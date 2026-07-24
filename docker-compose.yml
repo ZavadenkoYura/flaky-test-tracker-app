@@ -1,0 +1,84 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: flaky_test_tracker
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: devpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ai-classifier:
+    build: ./ai-classifier
+    restart: unless-stopped
+    environment:
+      PORT: 4100
+      MODEL_ID: Xenova/all-MiniLM-L6-v2
+    ports:
+      - "4100:4100"
+    volumes:
+      - ai-classifier-cache:/app/.cache
+
+  db-init:
+    build: ./backend
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: flaky_test_tracker
+      DB_USER: postgres
+      DB_PASSWORD: devpassword
+      DB_SSL: "false"
+    command: ["node", "dist/scripts/init-db.js"]
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    # Picks up GITHUB_CLIENT_ID/SECRET, STRIPE_* etc. from the existing
+    # local dev file — the `environment:` block below only overrides the
+    # values that need to point at other containers instead of localhost.
+    env_file:
+      - ./backend/.env
+    environment:
+      PORT: 3000
+      FRONTEND_URL: http://localhost:8000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: flaky_test_tracker
+      DB_USER: postgres
+      DB_PASSWORD: devpassword
+      DB_SSL: "false"
+      AI_CLASSIFIER_URL: http://ai-classifier:4100
+    ports:
+      - "3000:3000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        SERVICE_API_BASE_URL: http://localhost:3000/api/v1
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8000:80"
+
+volumes:
+  postgres-data:
+  ai-classifier-cache:
